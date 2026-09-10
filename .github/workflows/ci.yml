@@ -1,0 +1,163 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after this run passes builds and checks
+        type: boolean
+        default: false
+      hosts:
+        description: Deployment hosts (all or comma-separated names)
+        type: string
+        default: all
+      force:
+        description: Also deploy unchanged closures (offline and deferred hosts still skip)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-hosts:
+    name: Build all six hosts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+        id: nix
+      - name: Build CI tools and capture the flake inventory
+        run: |
+          TOOLS="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.ci-tools)"
+          echo "TOOLS=$TOOLS" >> "$GITHUB_ENV"
+          nix eval --json .#nixosConfigurations --apply builtins.attrNames > "$RUNNER_TEMP/expected-hosts.json"
+          nix eval --json .#deploy.targets > "$RUNNER_TEMP/deploy-targets.json"
+      - name: Build hosts directly with nix-fast-build
+        run: |
+          "$TOOLS/bin/nix-fast-build" --flake .#nixosConfigurations \
+            --select 'configs: builtins.mapAttrs (_: cfg: cfg.config.system.build.toplevel) configs' \
+            --systems x86_64-linux --no-link --result-file "$RUNNER_TEMP/host-results.json"
+          python3 .github/scripts/ci.py capture \
+            --nfb "$RUNNER_TEMP/host-results.json" --hosts "$RUNNER_TEMP/expected-hosts.json" \
+            --targets "$RUNNER_TEMP/deploy-targets.json" --revision "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/build-record.json"
+      - name: Upload and retain trusted build closures
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          test -n "$CACHIX_AUTH_TOKEN"
+          jq -r '.hosts[], .targets[].rollbackScript' "$RUNNER_TEMP/build-record.json" | sort -u > "$RUNNER_TEMP/cache-paths"
+          "$TOOLS/bin/cachix" push npscommercial < "$RUNNER_TEMP/cache-paths"
+          mapfile -t paths < "$RUNNER_TEMP/cache-paths"
+          # Cachix omits dependencies already available from upstream caches.
+          nix path-info --store https://npscommercial.cachix.org "${paths[@]}" >/dev/null
+          python3 .github/scripts/ci.py pin-builds --record "$RUNNER_TEMP/build-record.json"
+      - name: Preserve exact build evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nps-host-builds-${{ github.sha }}
+          path: ${{ runner.temp }}/build-record.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Refresh the optional inputs and tools seed
+        id: seed
+        if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && steps.nix.outputs.exact-hit != 'true'
+        continue-on-error: true
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          nix flake archive --json path:. > "$RUNNER_TEMP/flake-archive.json"
+          bash .github/scripts/nix-seed.sh refresh \
+            "$RUNNER_TEMP/nix-seed-candidate" "$RUNNER_TEMP/nix-seed-state" "$TOOLS" \
+            "$RUNNER_TEMP/build-record.json" "$RUNNER_TEMP/flake-archive.json"
+          bash .github/scripts/nix-seed.sh validate "$RUNNER_TEMP/nix-seed-candidate"
+          bash .github/scripts/nix-seed.sh discard "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"
+          mv "$RUNNER_TEMP/nix-seed-candidate" "$RUNNER_TEMP/nix-seed-cache"
+      - name: Save the refreshed seed
+        if: steps.seed.outcome == 'success'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/nix-seed-cache
+          key: ${{ steps.nix.outputs.cache-key }}
+      - name: Report a discarded seed refresh
+        if: always() && steps.seed.outcome == 'failure'
+        run: echo '::warning::Optional seed refresh failed; the validated host builds remain available in Cachix.'
+      - name: Unmount the seed
+        if: always()
+        run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"
+
+  flake-check:
+    name: Check the flake
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-nix
+      - run: nix flake check --print-build-logs
+      - name: Unmount the seed
+        if: always()
+        run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"
+
+  deploy:
+    name: Check deployment access and deploy
+    needs: [build-hosts, flake-check]
+    if: >-
+      github.ref_name == github.event.repository.default_branch &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: cachix-deploy
+      cancel-in-progress: false
+    env:
+      NPS_DEPLOY_REQUESTED: ${{ ((github.event_name == 'push' && vars.ENABLE_CACHIX_DEPLOY == 'true') || (github.event_name == 'workflow_dispatch' && inputs.deploy)) && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: nps-host-builds-${{ github.sha }}
+          path: ${{ runner.temp }}/validated-build
+      - name: Check agent access without activation
+        env:
+          CACHIX_STATUS_TOKEN: ${{ secrets.CACHIX_STATUS_TOKEN }}
+        run: python3 .github/scripts/ci.py status --record "$RUNNER_TEMP/validated-build/build-record.json"
+      - uses: ./.github/actions/setup-nix
+        id: nix
+        if: env.NPS_DEPLOY_REQUESTED == 'true'
+      - name: Activate only eligible current builds
+        if: env.NPS_DEPLOY_REQUESTED == 'true'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          CACHIX_ACTIVATE_TOKEN: ${{ secrets.CACHIX_ACTIVATE_TOKEN }}
+          CACHIX_STATUS_TOKEN: ${{ secrets.CACHIX_STATUS_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEPLOY_HOSTS: ${{ inputs.hosts || 'all' }}
+          DEPLOY_FORCE: ${{ inputs.force && 'true' || 'false' }}
+        run: |
+          TOOLS="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.ci-tools)"
+          python3 .github/scripts/ci.py deploy \
+            --record "$RUNNER_TEMP/validated-build/build-record.json" \
+            --hosts "$DEPLOY_HOSTS" --force "$DEPLOY_FORCE" --tools "$TOOLS" \
+            --directory "$RUNNER_TEMP/cachix-deploy" \
+            --default-branch "$DEFAULT_BRANCH" --ref-name "$GITHUB_REF_NAME"
+      - name: Unmount the seed
+        if: always() && steps.nix.outputs.cache-key != ''
+        run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"

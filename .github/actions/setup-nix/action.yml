@@ -1,0 +1,83 @@
+name: Set up Linux Nix
+description: Restore the optional inputs and tools seed, then initialise single-user Nix.
+outputs:
+  cache-key:
+    description: Immutable seed cache key for these inputs and tools.
+    value: ${{ steps.identity.outputs.key }}
+  exact-hit:
+    description: Whether the immutable cache key already exists.
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Identify the seed
+      id: identity
+      shell: bash
+      env:
+        COMPATIBILITY: ${{ hashFiles('flake.lock', 'modules/ci.nix', '.github/scripts/nix-seed.sh', '.github/actions/setup-nix/action.yml', '.github/workflows/ci.yml') }}
+      run: |
+        echo "NIX_SEED_COMPATIBILITY_HASH=$COMPATIBILITY" >> "$GITHUB_ENV"
+        echo "key=nix-seed-v1-erofs-lz4-ubuntu-24.04-x86_64-nix-2.34.7-$COMPATIBILITY" >> "$GITHUB_OUTPUT"
+        {
+          echo 'NPS_NIX_CONF<<NIX_CONF_END'
+          echo 'experimental-features = nix-command flakes'
+          echo 'accept-flake-config = true'
+          echo 'auto-optimise-store = false'
+          echo 'connect-timeout = 10'
+          echo 'download-attempts = 2'
+          echo 'stalled-download-timeout = 60'
+          echo 'extra-substituters = https://npscommercial.cachix.org'
+          echo 'extra-trusted-public-keys = npscommercial.cachix.org-1:reHRgPxKuZD3uceoIDTl1YCZqzvVa8Bw1x9k0U/0LKM='
+          echo 'NIX_CONF_END'
+        } >> "$GITHUB_ENV"
+    - name: Restore inputs and tools
+      id: cache
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      continue-on-error: true
+      with:
+        path: ${{ runner.temp }}/nix-seed-cache
+        key: ${{ steps.identity.outputs.key }}
+        restore-keys: nix-seed-v1-erofs-lz4-ubuntu-24.04-x86_64-nix-2.34.7-
+    - name: Mount a valid seed
+      id: mount
+      shell: bash
+      run: |
+        test ! -e /nix && test ! -L /nix
+        if [ -d "$RUNNER_TEMP/nix-seed-cache" ] && bash .github/scripts/nix-seed.sh restore \
+          "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"; then
+          echo 'restored=true' >> "$GITHUB_OUTPUT"
+        else
+          bash .github/scripts/nix-seed.sh discard "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"
+          echo 'restored=false' >> "$GITHUB_OUTPUT"
+        fi
+    - name: Initialise Nix
+      id: install
+      uses: whitestrake/nix-quick-install-action@5f21485631edff028d7d901364e33e1e63726c9e
+      continue-on-error: ${{ steps.mount.outputs.restored == 'true' }}
+      with:
+        nix_version: '2.34.7'
+        nix_conf: ${{ env.NPS_NIX_CONF }}
+    - name: Validate the restored installation
+      id: validate
+      if: steps.mount.outputs.restored == 'true' && steps.install.outcome == 'success'
+      continue-on-error: true
+      shell: bash
+      run: |
+        test "$(nix --version)" = 'nix (Nix) 2.34.7'
+        nix path-info "$(readlink -e "$HOME/.nix-profile")" >/dev/null
+    - name: Discard an unusable restored installation
+      if: steps.mount.outputs.restored == 'true' && (steps.install.outcome == 'failure' || steps.validate.outcome == 'failure')
+      shell: bash
+      run: bash .github/scripts/nix-seed.sh discard "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"
+    - name: Retry with a cold installation
+      if: steps.mount.outputs.restored == 'true' && (steps.install.outcome == 'failure' || steps.validate.outcome == 'failure')
+      uses: whitestrake/nix-quick-install-action@5f21485631edff028d7d901364e33e1e63726c9e
+      with:
+        nix_version: '2.34.7'
+        nix_conf: ${{ env.NPS_NIX_CONF }}
+    - name: Verify Nix
+      shell: bash
+      run: |
+        test "$(nix --version)" = 'nix (Nix) 2.34.7'
+        test "$(nix config show auto-optimise-store)" = false
+        nix path-info "$(readlink -e "$HOME/.nix-profile")" >/dev/null

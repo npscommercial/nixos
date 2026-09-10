@@ -1,0 +1,15 @@
+keys:
+  - &matt age1uqa0zltnvvruec96wd2c6l8eptyhhtpgp66u7ytzqzsacjfdyfaq2l3vzk
+  - &server_ls1 age1f3q7ctskdh30npeysqlmmrs6yalaq7e4czjcvl60jtgq2c40nprquh743t
+  - &server_npsb1 age1vyv7d26pqm49cxzpury4umc03qze2637eu8xs0jqr2kpyjgsa5js59rdr9
+  - &server_npsb2 age1ztfe28658n96m6unjcwsgnn3fykd0gyjxxw4wrqrp32au3ta35vqlmytcx
+  - &server_oberon age13z3e48jr6sy39k96urdl85hwsak7mr7dag7x5vrtj6vpwl8a7vxsdrn0kh
+creation_rules:
+  - path_regex: secrets/secrets\.yaml$
+    key_groups:
+    - age:
+      - *matt
+      - *server_ls1
+      - *server_npsb1
+      - *server_npsb2
+      - *server_oberon
