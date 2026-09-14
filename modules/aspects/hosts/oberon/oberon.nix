@@ -1,6 +1,6 @@
 {den, ...}: {
   den.aspects.oberon = {
-    includes = [den.aspects.docker];
+    includes = [den.aspects.server den.aspects.docker];
     nixos = {
       imports = [./_hardware.nix];
 

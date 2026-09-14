@@ -6,6 +6,7 @@
   }: let
     dockerEnabled = config.virtualisation.docker.enable;
   in {
+    nps.deployment.health.requiredSystemdUnits = ["alloy.service"];
     sops.secrets.alloyEnv = {};
 
     services.alloy = {

@@ -12,7 +12,7 @@
     imports = [inputs.sops-nix.nixosModules.sops];
     sops = {
       # Default secret file
-      defaultSopsFile = ../secrets/secrets.yaml;
+      defaultSopsFile = ./secrets.yaml;
       defaultSopsFormat = "yaml";
       # Auto import SSH host key to age
       age.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];

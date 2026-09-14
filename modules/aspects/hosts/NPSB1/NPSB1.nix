@@ -1,7 +1,11 @@
 {den, ...}: {
   den.aspects.NPSB1 = {
-    includes = [den.aspects.backup];
+    includes = [den.aspects.server den.aspects.backup den.aspects.office-wireless];
     nixos = {config, ...}: {
+      nps.deployment.deferred = true;
+      # Bootloader
+      boot.loader.systemd-boot.enable = true;
+      boot.loader.efi.canTouchEfiVariables = true;
       imports = [./_hardware.nix];
       system.stateVersion = "23.11";
 

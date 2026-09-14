@@ -17,161 +17,15 @@ from pathlib import Path
 
 CACHE = "npscommercial"
 CACHIX_API = "https://app.cachix.org/api/v1"
-STORE_RE = re.compile(r"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[A-Za-z0-9+._?=-]+$")
-SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+from build_records import (
+    SHA_RE, build_record, read_json, require, select_targets, store_path, validate_record,
+)
 
 
 class ApiError(RuntimeError):
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
-
-
-def require(condition, message):
-    if not condition:
-        raise ValueError(message)
-
-
-def store_path(value, field):
-    require(isinstance(value, str) and STORE_RE.fullmatch(value), f"invalid {field}")
-    return value
-
-
-def read_json(path):
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"cannot read valid JSON from {path}") from error
-
-
-def build_record(nfb, expected_hosts, targets, revision):
-    require(isinstance(expected_hosts, list), "host inventory must be an array")
-    require(
-        len(expected_hosts) == 6
-        and all(isinstance(host, str) and host for host in expected_hosts)
-        and len(set(expected_hosts)) == len(expected_hosts),
-        "host inventory must contain six unique names",
-    )
-    expected_hosts = sorted(expected_hosts)
-    require(isinstance(revision, str) and SHA_RE.fullmatch(revision), "source revision must be a Git SHA")
-    require(isinstance(nfb, dict) and isinstance(nfb.get("results"), list), "NFB result must contain a results array")
-
-    records = nfb["results"]
-    require(records, "NFB result is empty")
-    built = {}
-    evaluated = {}
-    seen = set()
-    for result in records:
-        require(isinstance(result, dict), "NFB result record must be an object")
-        kind = result.get("type")
-        attr = result.get("attr")
-        require(kind in {"EVAL", "BUILD"}, f"unexpected NFB result type: {kind}")
-        require(isinstance(attr, str) and attr, "NFB result attr must be a non-empty string")
-        require((kind, attr) not in seen, f"duplicate NFB {kind} result for {attr}")
-        seen.add((kind, attr))
-        require(isinstance(result.get("success"), bool), f"NFB success is malformed for {attr}")
-        require(
-            isinstance(result.get("duration"), (int, float))
-            and not isinstance(result.get("duration"), bool),
-            f"NFB duration is malformed for {attr}",
-        )
-        if not result["success"]:
-            raise ValueError(f"NFB {kind.lower()} failed for {attr}")
-        require(result.get("error") is None, f"successful NFB result has an error for {attr}")
-        outputs = result.get("outputs")
-        require(isinstance(outputs, dict), f"NFB outputs are missing for {attr}")
-        output = store_path(outputs.get("out"), f"NFB output for {attr}")
-        (evaluated if kind == "EVAL" else built)[attr] = output
-
-    require(sorted(evaluated) == expected_hosts, "NFB evaluation hosts do not match the flake inventory")
-    require(sorted(built) == expected_hosts, "NFB build hosts do not match the flake inventory")
-    require(evaluated == built, "NFB evaluation and build outputs do not match")
-
-    require(isinstance(targets, dict) and len(targets) == 4, "deploy.targets must contain four hosts")
-    require(set(targets) <= set(expected_hosts), "deploy.targets contains a host outside the flake inventory")
-    captured_targets = {}
-    deferred = set()
-    for host in sorted(targets):
-        target = targets[host]
-        require(isinstance(target, dict), f"deploy target {host} must be an object")
-        require(target.get("system") == "x86_64-linux", f"deploy target {host} has the wrong system")
-        target_store = store_path(target.get("storePath"), f"deploy target store path for {host}")
-        require(target_store == built[host], f"deploy target {host} does not match the NFB output")
-        rollback = store_path(target.get("rollbackScript"), f"rollback script for {host}")
-        require(target.get("deployPin") == f"deployed-host-{host}", f"deploy pin is malformed for {host}")
-        is_deferred = target.get("deferred", False)
-        require(isinstance(is_deferred, bool), f"deferred flag is malformed for {host}")
-        if is_deferred:
-            deferred.add(host)
-        captured_targets[host] = {
-            "system": "x86_64-linux",
-            "storePath": target_store,
-            "rollbackScript": rollback,
-            "deployPin": target["deployPin"],
-            "deferred": is_deferred,
-        }
-    require(deferred == {"NPSB1"}, "NPSB1 must be the only deferred deployment target")
-
-    record = {
-        "schemaVersion": 1,
-        "sourceRevision": revision,
-        "hosts": {host: built[host] for host in expected_hosts},
-        "targets": captured_targets,
-    }
-    validate_record(record)
-    return record
-
-
-def validate_record(record):
-    require(isinstance(record, dict) and record.get("schemaVersion") == 1, "unsupported build record schema")
-    revision = record.get("sourceRevision")
-    require(isinstance(revision, str) and SHA_RE.fullmatch(revision), "build record source revision is malformed")
-    hosts = record.get("hosts")
-    require(isinstance(hosts, dict) and len(hosts) == 6, "build record must contain six hosts")
-    for host, path in hosts.items():
-        require(isinstance(host, str) and host, "build record host name is malformed")
-        store_path(path, f"build record path for {host}")
-    targets = record.get("targets")
-    require(isinstance(targets, dict) and len(targets) == 4, "build record must contain four targets")
-    require(set(targets) <= set(hosts), "build record target is outside the host inventory")
-    deferred = set()
-    for host, target in targets.items():
-        require(isinstance(target, dict), f"build record target is malformed for {host}")
-        require(target.get("system") == "x86_64-linux", f"build record system is malformed for {host}")
-        require(target.get("storePath") == hosts[host], f"build record target path does not match for {host}")
-        store_path(target.get("rollbackScript"), f"build record rollback script for {host}")
-        require(target.get("deployPin") == f"deployed-host-{host}", f"build record pin is malformed for {host}")
-        require(isinstance(target.get("deferred"), bool), f"build record deferred flag is malformed for {host}")
-        if target["deferred"]:
-            deferred.add(host)
-    require(deferred == {"NPSB1"}, "NPSB1 must be the only deferred deployment target")
-    return record
-
-
-def select_targets(record, requested, force, pins):
-    require(isinstance(force, bool), "force must be a boolean")
-    targets = record.get("targets")
-    require(isinstance(targets, dict), "build record targets are missing")
-    if requested == "all":
-        names = sorted(targets)
-    else:
-        names = [name.strip() for name in requested.split(",") if name.strip()]
-        require(names and len(names) == len(set(names)), "selected hosts must be unique and non-empty")
-        unknown = sorted(set(names) - set(targets))
-        require(not unknown, f"unknown deployment host: {', '.join(unknown)}")
-        names.sort()
-
-    selected = []
-    skipped = {}
-    for host in names:
-        target = {"host": host, **targets[host]}
-        if target["deferred"]:
-            skipped[host] = "deferred"
-        elif not force and pins.get(target["deployPin"]) == target["storePath"]:
-            skipped[host] = "unchanged"
-        else:
-            selected.append(target)
-    return selected, skipped
 
 
 def agent_is_online(payload, expected_name, now=None):
@@ -302,7 +156,7 @@ def agent_online(token, host):
 def status_record(record):
     validate_record(record)
     require(
-        os.environ.get("GITHUB_SHA") == record["sourceRevision"],
+        os.environ.get("SOURCE_REVISION", os.environ.get("GITHUB_SHA")) == record["sourceRevision"],
         "build record does not match the workflow revision",
     )
     token = os.environ.get("CACHIX_STATUS_TOKEN", "")
@@ -373,21 +227,64 @@ def activate(tools, token, target, directory):
         result = subprocess.run(
             [str(Path(tools) / "bin/cachix"), "deploy", "activate", str(path)],
             env=environment,
-            timeout=300,
+            timeout=2400,
         )
     except subprocess.TimeoutExpired as error:
         raise RuntimeError(
             f"activation outcome is unknown after the deadline for {target['host']}; deployed pin unchanged"
         ) from error
     if result.returncode:
-        raise RuntimeError(f"activation failed for {target['host']}; deployed pin unchanged")
+        raise RuntimeError(f"activation did not confirm success for {target['host']}; outcome requires reconciliation; deployed pin unchanged")
 
 
-def deploy_record(record, requested, force, tools, directory, default_branch, ref_name):
+def deployment_api(path, method="GET", payload=None):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    require(token and re.fullmatch(r"[^/]+/[^/]+", repository), "GitHub deployment credentials are missing")
+    # Never repeat a POST whose response was lost.
+    call = retry_json if method == "GET" else api_json
+    return call(f"https://api.github.com/repos/{repository}/deployments{path}", token, method, payload)
+
+
+def ensure_no_pending_deployment(host):
+    environment = urllib.parse.quote(f"nixos/{host}", safe="")
+    deployments = deployment_api(f"?environment={environment}&per_page=1")
+    require(isinstance(deployments, list), "GitHub deployment list is malformed")
+    if not deployments:
+        return
+    deployment = deployments[0]
+    require(isinstance(deployment, dict) and type(deployment.get("id")) is int, "GitHub deployment is malformed")
+    statuses = deployment_api(f"/{deployment['id']}/statuses?per_page=1")
+    require(isinstance(statuses, list), "GitHub deployment statuses are malformed")
+    state = statuses[0].get("state") if statuses and isinstance(statuses[0], dict) else None
+    require(state in {"success", "failure", "error", "inactive"},
+            f"unresolved deployment for {host}: inspect the previous activation and reconcile its GitHub deployment status before resubmitting")
+
+
+def start_deployment(record, host):
+    result = deployment_api("", "POST", {
+        "ref": record["sourceRevision"], "environment": f"nixos/{host}",
+        "auto_merge": False, "required_contexts": [],
+        "description": f"Activate validated NixOS closure on {host}",
+    })
+    require(isinstance(result, dict) and type(result.get("id")) is int, "GitHub deployment creation is ambiguous")
+    finish_deployment(result["id"], "in_progress")
+    return result["id"]
+
+
+def finish_deployment(deployment_id, state):
+    deployment_api(f"/{deployment_id}/statuses", "POST", {
+        "state": state, "auto_inactive": False,
+        "log_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
+    })
+
+
+def deploy_record(record, requested, force, tools, directory, default_branch, ref, mode="automatic"):
+    require("," not in requested and requested != "all", "executor requires exactly one host")
     validate_record(record)
     revision = record.get("sourceRevision")
-    require(os.environ.get("GITHUB_SHA") == revision, "build record does not match the workflow revision")
-    require(ref_name == default_branch, "deployment is restricted to the default branch")
+    require(os.environ.get("SOURCE_REVISION", os.environ.get("GITHUB_SHA")) == revision, "build record does not match the workflow revision")
+    require(ref == f"refs/heads/{default_branch}", "deployment controller must run from the default branch")
     cache_token = os.environ.get("CACHIX_AUTH_TOKEN", "")
     activate_token = os.environ.get("CACHIX_ACTIVATE_TOKEN", "")
     status_token = os.environ.get("CACHIX_STATUS_TOKEN", "")
@@ -407,27 +304,63 @@ def deploy_record(record, requested, force, tools, directory, default_branch, re
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    deployed = []
-    for target in selected:
-        host = target["host"]
-        if not agent_online(status_token, host):
-            print(f"Skipping {host}: agent offline on two probes; deployed pin unchanged")
-            print(f"{host} will be reconsidered on the next deployment run")
-            continue
-        verify_remote_paths(target)
-        if not agent_online(status_token, host):
-            print(f"Skipping {host}: agent offline before submission; deployed pin unchanged")
-            print(f"{host} will be reconsidered on the next deployment run")
-            continue
-        current = github_current_revision(github_token, repository, default_branch)
-        if current != revision:
-            print(f"Skipping stale deployment: built={revision} current={current}")
-            break
-        activate(tools, activate_token, target, directory)
-        pin_store_path(cache_token, target["deployPin"], target["storePath"], 2)
-        deployed.append(host)
-        print(f"Activated {host} successfully and advanced {target['deployPin']}")
-    return deployed
+    if not selected:
+        return []
+    target = selected[0]
+    host = target["host"]
+    ensure_no_pending_deployment(host)
+    if not agent_online(status_token, host):
+        print(f"Skipping {host}: agent offline on two probes; deployed pin unchanged")
+        print(f"{host} will be reconsidered on the next deployment run")
+        return []
+    verify_remote_paths(target)
+    if not agent_online(status_token, host):
+        print(f"Skipping {host}: agent offline before submission; deployed pin unchanged")
+        print(f"{host} will be reconsidered on the next deployment run")
+        return []
+    if not revision_allowed(record, mode, default_branch):
+        return []
+    # Re-read under the per-host workflow lock immediately before activation.
+    if not force and fetch_pins(cache_token).get(target["deployPin"]) == target["storePath"]:
+        print(f"Skipping {host}: unchanged before submission")
+        return []
+    operation = start_deployment(record, host)
+    # Any interruption from here leaves the operation pending. A subsequent
+    # job must reconcile it, not blindly repeat an uncertain activation.
+    activate(tools, activate_token, target, directory)
+    pin_store_path(cache_token, target["deployPin"], target["storePath"], 2)
+    finish_deployment(operation, "success")
+    print(f"Activated {host} successfully and advanced {target['deployPin']}")
+    return [host]
+
+
+def revision_allowed(record, mode, default_branch):
+    require(mode in {"automatic", "manual"}, "unknown deployment mode")
+    if mode == "manual":
+        return True
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    require(token and re.fullmatch(r"[^/]+/[^/]+", repository), "GitHub freshness credentials are missing")
+    current = github_current_revision(token, repository, default_branch)
+    if current != record["sourceRevision"]:
+        print(f"Skipping stale revision: built={record['sourceRevision']} current={current}", file=sys.stderr)
+        return False
+    return True
+
+
+def command_plan(args):
+    record = validate_record(read_json(args.record))
+    require(record["sourceRevision"] == args.revision, "build record does not match validated revision")
+    token = os.environ.get("CACHIX_AUTH_TOKEN", "")
+    require(token, "CACHIX_AUTH_TOKEN is empty")
+    selected, skipped = select_targets(record, args.hosts, args.force == "true", fetch_pins(token))
+    if not revision_allowed(record, args.mode, args.default_branch):
+        selected = []
+    for host, reason in skipped.items():
+        print(f"Skipping {host}: {reason}", file=sys.stderr)
+    matrix = {"include": [{"host": target["host"]} for target in selected]}
+    Path(args.output).write_text(json.dumps(matrix) + "\n")
+    print(json.dumps(matrix))
 
 
 def command_capture(args):
@@ -444,8 +377,11 @@ def command_pin_builds(args):
     record = validate_record(read_json(args.record))
     token = os.environ.get("CACHIX_AUTH_TOKEN", "")
     require(token, "CACHIX_AUTH_TOKEN is empty")
+    require(record["sourceRevision"] == os.environ.get("SOURCE_REVISION", os.environ.get("GITHUB_SHA")), "build record revision mismatch")
     pins = fetch_pins(token)
     for host, path in record["hosts"].items():
+        if not revision_allowed(record, "automatic", args.default_branch):
+            return
         name = f"built-host-{host}"
         if pins.get(name) == path:
             print(f"Build pin already current: {name}")
@@ -477,7 +413,8 @@ def command_deploy(args):
         tools,
         directory,
         args.default_branch,
-        args.ref_name,
+        args.ref,
+        args.mode,
     )
 
 
@@ -495,20 +432,32 @@ def main():
 
     pins = commands.add_parser("pin-builds")
     pins.add_argument("--record", required=True)
+    pins.add_argument("--default-branch", required=True)
     pins.set_defaults(run=command_pin_builds)
+
+    plan = commands.add_parser("plan")
+    plan.add_argument("--record", required=True)
+    plan.add_argument("--revision", required=True)
+    plan.add_argument("--hosts", default="all")
+    plan.add_argument("--force", choices=("true", "false"), default="false")
+    plan.add_argument("--mode", choices=("automatic", "manual"), required=True)
+    plan.add_argument("--default-branch", required=True)
+    plan.add_argument("--output", required=True)
+    plan.set_defaults(run=command_plan)
 
     status = commands.add_parser("status")
     status.add_argument("--record", required=True)
     status.set_defaults(run=command_status)
 
     deploy = commands.add_parser("deploy")
+    deploy.add_argument("--mode", choices=("automatic", "manual"), required=True)
     deploy.add_argument("--record", required=True)
     deploy.add_argument("--hosts", required=True)
     deploy.add_argument("--force", choices=("true", "false"), required=True)
     deploy.add_argument("--tools", required=True)
     deploy.add_argument("--directory", required=True)
     deploy.add_argument("--default-branch", required=True)
-    deploy.add_argument("--ref-name", required=True)
+    deploy.add_argument("--ref", required=True)
     deploy.set_defaults(run=command_deploy)
 
     args = parser.parse_args()

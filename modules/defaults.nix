@@ -1,11 +1,31 @@
 {
   den,
   inputs,
+  config,
+  lib,
   ...
 }: {
+  den.schema.user.classes = lib.mkDefault ["homeManager"];
+
   den.default.includes = [den.batteries.hostname];
 
+  den.default.wsl-host = {pkgs, ...}: {
+    wsl = {
+      ssh-agent.enable = true;
+    };
+    environment.systemPackages = with pkgs; [
+      parallel
+      qpdf
+      ocrmypdf
+      sops
+      age
+      nil
+      alejandra
+    ];
+  };
+
   den.default.nixos = {pkgs, ...}: {
+    nps.deployment.health.requiredSystemdUnits = ["sshd.service"];
     networking.domain = "npscommercial.net.au";
     time.timeZone = "Australia/Brisbane";
 
@@ -13,16 +33,8 @@
       experimental-features = ["nix-command" "flakes"];
       auto-optimise-store = true;
       trusted-users = ["@wheel"];
-      substituters = [
-        "https://cache.nixos.org"
-        "https://nix-community.cachix.org"
-        "https://npscommercial.cachix.org"
-      ];
-      trusted-public-keys = [
-        "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-        "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-        "npscommercial.cachix.org-1:reHRgPxKuZD3uceoIDTl1YCZqzvVa8Bw1x9k0U/0LKM="
-      ];
+      substituters = config.flake-file.nixConfig.extra-substituters;
+      trusted-public-keys = config.flake-file.nixConfig.extra-trusted-public-keys;
     };
     nix.optimise.automatic = true;
     nix.gc = {

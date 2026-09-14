@@ -10,7 +10,7 @@
     programs.alejandra.enable = true;
     settings.excludes = [
       "flake.nix"
-      "secrets/secrets.yaml"
+      "modules/secrets/secrets.yaml"
     ];
   };
 }

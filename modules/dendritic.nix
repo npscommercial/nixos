@@ -10,12 +10,10 @@
       lazy-trees = true;
       extra-substituters = [
         "https://cache.nixos.org"
-        "https://nix-community.cachix.org"
         "https://npscommercial.cachix.org"
       ];
       extra-trusted-public-keys = [
         "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
-        "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
         "npscommercial.cachix.org-1:reHRgPxKuZD3uceoIDTl1YCZqzvVa8Bw1x9k0U/0LKM="
       ];
     };
@@ -42,6 +40,5 @@
   imports = [
     inputs.flake-file.flakeModules.dendritic
     inputs.den.flakeModule
-    (inputs.den.namespace "whitestrake" false)
   ];
 }

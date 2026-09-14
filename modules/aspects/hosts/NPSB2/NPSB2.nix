@@ -1,7 +1,10 @@
 {den, ...}: {
   den.aspects.NPSB2 = {
-    includes = [den.aspects.backup];
+    includes = [den.aspects.server den.aspects.backup den.aspects.office-wireless];
     nixos = {config, ...}: {
+      # Bootloader
+      boot.loader.systemd-boot.enable = true;
+      boot.loader.efi.canTouchEfiVariables = true;
       imports = [./_hardware.nix];
       system.stateVersion = "23.11";
       users.users.matt.uid = 1000;

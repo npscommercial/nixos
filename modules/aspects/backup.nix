@@ -1,24 +1,8 @@
 {den, ...}: {
   den.aspects.backup = {
-    includes = [den.aspects.server];
-    nixos = {config, ...}: {
-      # Bootloader
-      boot.loader.systemd-boot.enable = true;
-      boot.loader.efi.canTouchEfiVariables = true;
-      boot.kernel.sysctl = {
-        "fs.inotify.max_user_watches" = 204800;
-      };
-
-      # wpa-supplicant and systemd networking
-      sops.secrets.wirelessEnv = {};
-      networking.useNetworkd = true;
-      systemd.network.enable = true;
-      networking.wireless = {
-        enable = true;
-        secretsFile = config.sops.secrets.wirelessEnv.path;
-        networks.NPSCOMMERCIAL.pskRaw = "ext:PSK_NPSCOMMERCIAL";
-        networks.WiFi-3040.pskRaw = "ext:PSK_WIFI3040";
-      };
+    nixos = {
+      nps.deployment.health.requiredSystemdUnits = ["syncthing.service"];
+      boot.kernel.sysctl."fs.inotify.max_user_watches" = 204800;
 
       # Enable Syncthing service
       services.syncthing = {

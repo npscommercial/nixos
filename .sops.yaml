@@ -5,7 +5,7 @@ keys:
   - &server_npsb2 age1ztfe28658n96m6unjcwsgnn3fykd0gyjxxw4wrqrp32au3ta35vqlmytcx
   - &server_oberon age13z3e48jr6sy39k96urdl85hwsak7mr7dag7x5vrtj6vpwl8a7vxsdrn0kh
 creation_rules:
-  - path_regex: secrets/secrets\.yaml$
+  - path_regex: ^modules/secrets/secrets\.yaml$
     key_groups:
     - age:
       - *matt
