@@ -39,56 +39,76 @@ defaults:
 
 jobs:
   resolve:
+    name: Select revision
     runs-on: ubuntu-24.04
     outputs:
       revision: ${{ steps.source.outputs.revision }}
     steps:
-      - name: Require the trusted workflow for manual operations
+      - name: Verify manual runs use the default-branch workflow
         if: github.event_name == 'workflow_dispatch'
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.revision || github.sha }}
           persist-credentials: false
-      - id: source
+      - name: Record exact commit
+        id: source
         run: echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   build-hosts:
-    name: Build declared hosts
+    name: Build systems
+    permissions:
+      contents: read
+      checks: write
     needs: resolve
     env:
       SOURCE_REVISION: ${{ needs.resolve.outputs.revision }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.revision }}
           path: source
           persist-credentials: false
-      - uses: ./.github/actions/setup-nix
+      - name: Prepare Linux build environment
+        uses: ./.github/actions/setup-nix
         id: nix
-      - name: Build CI tools and capture the flake inventory
+      - name: Build CI tools
         run: |
           TOOLS="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.ci-tools)"
           echo "TOOLS=$TOOLS" >> "$GITHUB_ENV"
+      - name: Evaluate host inventory
+        run: |
           nix eval --json ./source#nixosConfigurations --apply builtins.attrNames > "$RUNNER_TEMP/expected-hosts.json"
           nix eval --json ./source#deploy.targets > "$RUNNER_TEMP/deploy-targets.json"
-      - name: Build hosts directly with nix-fast-build
+      - name: Build NixOS systems
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLISH_CHECKS: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
         run: |
-          "$TOOLS/bin/nix-fast-build" --flake ./source#nixosConfigurations \
+          reporting=()
+          if [ "$PUBLISH_CHECKS" = true ]; then
+            reporting=(--publish-checks --revision "$SOURCE_REVISION")
+          fi
+          python3 .github/scripts/nix_fast_build.py "${reporting[@]}" -- "$TOOLS/bin/nix-fast-build" --flake ./source#nixosConfigurations \
             --select 'configs: builtins.mapAttrs (_: cfg: cfg.config.system.build.toplevel) configs' \
             --systems x86_64-linux --no-link --result-file "$RUNNER_TEMP/host-results.json"
+      - name: Validate and record build outputs
+        run: |
           python3 .github/scripts/ci.py capture \
             --nfb "$RUNNER_TEMP/host-results.json" --hosts "$RUNNER_TEMP/expected-hosts.json" \
             --targets "$RUNNER_TEMP/deploy-targets.json" --revision "$SOURCE_REVISION" \
             --output "$RUNNER_TEMP/build-record.json"
-      - name: Upload trusted build closures
+      - name: Upload systems to Cachix
         if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview)
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -96,17 +116,20 @@ jobs:
           test -n "$CACHIX_AUTH_TOKEN"
           jq -r '.hosts[], .targets[].rollbackScript' "$RUNNER_TEMP/build-record.json" | sort -u > "$RUNNER_TEMP/cache-paths"
           "$TOOLS/bin/cachix" push npscommercial < "$RUNNER_TEMP/cache-paths"
+      - name: Verify Cachix availability
+        if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview)
+        run: |
           mapfile -t paths < "$RUNNER_TEMP/cache-paths"
           # Cachix omits dependencies already available from upstream caches.
           nix path-info --store https://npscommercial.cachix.org "${paths[@]}" >/dev/null
-      - name: Preserve exact build evidence
+      - name: Upload build record
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nps-host-builds-${{ needs.resolve.outputs.revision }}
           path: ${{ runner.temp }}/build-record.json
           if-no-files-found: error
           retention-days: 14
-      - name: Refresh the optional inputs and tools seed
+      - name: Refresh Nix tools cache
         id: seed
         if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && steps.nix.outputs.exact-hit != 'true'
         continue-on-error: true
@@ -121,41 +144,45 @@ jobs:
           bash .github/scripts/nix-seed.sh validate "$RUNNER_TEMP/nix-seed-candidate"
           bash .github/scripts/nix-seed.sh discard "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"
           mv "$RUNNER_TEMP/nix-seed-candidate" "$RUNNER_TEMP/nix-seed-cache"
-      - name: Save the refreshed seed
+      - name: Save Nix tools cache
         if: steps.seed.outcome == 'success'
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
         continue-on-error: true
         with:
           path: ${{ runner.temp }}/nix-seed-cache
           key: ${{ steps.nix.outputs.cache-key }}
-      - name: Report a discarded seed refresh
+      - name: Report cache refresh failure
         if: always() && steps.seed.outcome == 'failure'
-        run: echo '::warning::Optional seed refresh failed; the validated host builds remain available in Cachix.'
-      - name: Unmount the seed
+        run: echo '::warning::Optional Nix tools cache refresh failed; the validated host builds remain available in Cachix.'
+      - name: Unmount Nix tools cache
         if: always()
         run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"
 
   flake-check:
-    name: Check the flake
+    name: Checks
     needs: resolve
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.revision }}
           path: source
           persist-credentials: false
-      - uses: ./.github/actions/setup-nix
-      - run: nix flake check ./source --print-build-logs
-      - name: Unmount the seed
+      - name: Prepare Linux build environment
+        uses: ./.github/actions/setup-nix
+      - name: Run flake checks
+        run: nix flake check ./source --print-build-logs
+      - name: Unmount Nix tools cache
         if: always()
         run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"
   pin-builds:
-    name: Retain current default-branch builds
+    name: Pin builds in Cachix
     needs: [resolve, build-hosts]
     if: github.event_name == 'push' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-24.04
@@ -163,14 +190,17 @@ jobs:
       group: cachix-build-pins
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download build record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nps-host-builds-${{ needs.resolve.outputs.revision }}
           path: ${{ runner.temp }}/validated-build
-      - env:
+      - name: Update Cachix build pins
+        env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -187,20 +217,23 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has-targets: ${{ steps.plan.outputs.has-targets }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download build record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nps-host-builds-${{ needs.resolve.outputs.revision }}
           path: ${{ runner.temp }}/validated-build
-      - name: Optional agent diagnostics
+      - name: Check Cachix agent status
         if: github.event_name == 'workflow_dispatch' && inputs.diagnostics
         env:
           CACHIX_STATUS_TOKEN: ${{ secrets.CACHIX_STATUS_TOKEN }}
           SOURCE_REVISION: ${{ needs.resolve.outputs.revision }}
         run: python3 .github/scripts/ci.py status --record "$RUNNER_TEMP/validated-build/build-record.json"
-      - id: plan
+      - name: Select hosts for deployment
+        id: plan
         if: github.event_name == 'push' || inputs.deploy || inputs.preview
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -237,16 +270,23 @@ jobs:
       group: cachix-deploy-${{ matrix.host }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download build record
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: nps-host-builds-${{ needs.resolve.outputs.revision }}
           path: ${{ runner.temp }}/validated-build
-      - uses: ./.github/actions/setup-nix
+      - name: Prepare Linux build environment
+        uses: ./.github/actions/setup-nix
         id: nix
-      - name: Activate the selected validated host
+      - name: Build deployment tools
+        run: |
+          TOOLS="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.ci-tools)"
+          echo "TOOLS=$TOOLS" >> "$GITHUB_ENV"
+      - name: Deploy and verify host
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           CACHIX_ACTIVATE_TOKEN: ${{ secrets.CACHIX_ACTIVATE_TOKEN }}
@@ -258,12 +298,11 @@ jobs:
           DEPLOY_FORCE: ${{ inputs.force && 'true' || 'false' }}
           DEPLOY_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'automatic' }}
         run: |
-          TOOLS="$(nix build --no-link --print-out-paths .#packages.x86_64-linux.ci-tools)"
           python3 .github/scripts/ci.py deploy \
             --record "$RUNNER_TEMP/validated-build/build-record.json" \
             --hosts "$DEPLOY_HOST" --force "$DEPLOY_FORCE" --mode "$DEPLOY_MODE" --tools "$TOOLS" \
             --directory "$RUNNER_TEMP/cachix-deploy" \
             --default-branch "$DEFAULT_BRANCH" --ref "$GITHUB_REF"
-      - name: Unmount the seed
+      - name: Unmount Nix tools cache
         if: always() && steps.nix.outputs.cache-key != ''
         run: bash .github/scripts/nix-seed.sh cleanup "$RUNNER_TEMP/nix-seed-state"

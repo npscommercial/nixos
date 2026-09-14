@@ -1,5 +1,5 @@
-name: Set up Linux Nix
-description: Restore the optional inputs and tools seed, then initialise single-user Nix.
+name: Prepare Linux build environment
+description: Restore the optional Nix tools cache, then initialise single-user Nix.
 outputs:
   cache-key:
     description: Immutable seed cache key for these inputs and tools.
@@ -10,7 +10,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Identify the seed
+    - name: Select Nix tools cache key
       id: identity
       shell: bash
       env:
@@ -30,7 +30,7 @@ runs:
           echo 'extra-trusted-public-keys = npscommercial.cachix.org-1:reHRgPxKuZD3uceoIDTl1YCZqzvVa8Bw1x9k0U/0LKM='
           echo 'NIX_CONF_END'
         } >> "$GITHUB_ENV"
-    - name: Restore inputs and tools
+    - name: Restore Nix tools cache
       id: cache
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
       continue-on-error: true
@@ -38,7 +38,7 @@ runs:
         path: ${{ runner.temp }}/nix-seed-cache
         key: ${{ steps.identity.outputs.key }}
         restore-keys: nix-seed-v1-erofs-lz4-ubuntu-24.04-x86_64-nix-2.34.7-
-    - name: Mount a valid seed
+    - name: Validate and mount Nix tools cache
       id: mount
       shell: bash
       run: |
@@ -69,7 +69,7 @@ runs:
       if: steps.mount.outputs.restored == 'true' && (steps.install.outcome == 'failure' || steps.validate.outcome == 'failure')
       shell: bash
       run: bash .github/scripts/nix-seed.sh discard "$RUNNER_TEMP/nix-seed-cache" "$RUNNER_TEMP/nix-seed-state"
-    - name: Retry with a cold installation
+    - name: Install Nix without the cache
       if: steps.mount.outputs.restored == 'true' && (steps.install.outcome == 'failure' || steps.validate.outcome == 'failure')
       uses: whitestrake/nix-quick-install-action@5f21485631edff028d7d901364e33e1e63726c9e
       with:
