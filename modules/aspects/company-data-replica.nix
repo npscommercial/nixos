@@ -1,11 +1,10 @@
-{lib, ...}: {
+{...}: {
   den.aspects.company-data-replica = {
     nixos = {
       nps.deployment.health.requiredSystemdUnits = [
         "syncthing.service"
         "syncthing-init.service"
       ];
-      boot.kernel.sysctl."fs.inotify.max_user_watches" = lib.mkDefault 204800;
 
       # Enable Syncthing service
       services.syncthing = {
