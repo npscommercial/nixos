@@ -18,9 +18,14 @@
           }
         ];
       };
+
+      sops.secrets.tailscaleOauthKey = {};
       services.tailscale = {
         enable = true;
         package = pkgs.unstable.tailscale;
+        authKeyFile = config.sops.secrets.tailscaleOauthKey.path;
+        authKeyParameters.ephemeral = false;
+        extraUpFlags = ["--advertise-tags=tag:server"];
       };
     };
   };
