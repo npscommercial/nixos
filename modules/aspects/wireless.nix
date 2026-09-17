@@ -1,7 +1,12 @@
 {...}: {
-  den.aspects.office-wireless.nixos = {config, ...}: {
+  den.aspects.wireless.nixos = {config, ...}: {
     # wpa-supplicant and systemd networking
-    sops.secrets.wirelessEnv = {};
+    # Hardened wpa_supplicant runs unprivileged in NixOS 26.05.
+    sops.secrets.wirelessEnv = {
+      group = "wpa_supplicant";
+      mode = "0440";
+      restartUnits = ["wpa_supplicant.service"];
+    };
     networking.useNetworkd = true;
     systemd.network.enable = true;
     networking.wireless = {

@@ -17,19 +17,7 @@
   boot.kernelModules = ["kvm-intel"];
   boot.extraModulePackages = [];
 
-  fileSystems."/" = {
-    device = "/dev/disk/by-uuid/ebfb45a6-9374-4657-98ad-7bac5e7728a5";
-    fsType = "ext4";
-  };
-
-  fileSystems."/boot" = {
-    device = "/dev/disk/by-uuid/A27A-4D0D";
-    fsType = "vfat";
-  };
-
-  swapDevices = [
-    {device = "/dev/disk/by-uuid/5f11e2e3-03a0-4b71-9e8a-db27563a394f";}
-  ];
+  # Filesystems and swap are owned by disko in NPSB2.nix.
 
   # Enables DHCP on each ethernet and wireless interface. In case of scripted networking
   # (the default) this is the recommended approach. When using systemd-networkd it's

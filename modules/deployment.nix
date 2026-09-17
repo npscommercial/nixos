@@ -53,7 +53,6 @@
     storePath = toString cfg.config.system.build.toplevel;
     rollbackScript = toString cfg.config.system.build.deployHealthRollbackScript;
     deployPin = "deployed-host-${name}";
-    deferred = cfg.config.nps.deployment.deferred;
   };
 in {
   den.default.nixos = {
@@ -157,11 +156,6 @@ in {
     };
   in {
     options.nps.deployment = {
-      deferred = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Defer deployment until host bootstrap is complete.";
-      };
       health.requiredSystemdUnits = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];

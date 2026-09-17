@@ -164,11 +164,7 @@ def status_record(record):
 
     statuses = {}
     valid_agent_response = False
-    for host, target in sorted(record["targets"].items()):
-        if target["deferred"]:
-            statuses[host] = "deferred"
-            print(f"{host}: deferred (unbootstrapped); agent not queried")
-            continue
+    for host in sorted(record["targets"]):
         status = agent_status(token, host, allow_unregistered=True)
         statuses[host] = status
         if status == "unregistered":
@@ -299,8 +295,7 @@ def deploy_record(record, requested, force, tools, directory, default_branch, re
     pins = fetch_pins(cache_token)
     selected, skipped = select_targets(record, requested, force, pins)
     for host, reason in skipped.items():
-        detail = "unbootstrapped" if reason == "deferred" else reason
-        print(f"Skipping {host}: {detail}; deployed pin unchanged")
+        print(f"Skipping {host}: {reason}; deployed pin unchanged")
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

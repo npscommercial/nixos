@@ -1,6 +1,9 @@
 {den, ...}: {
   den.aspects.LS1 = {
-    includes = [den.aspects.server den.aspects.docker];
+    includes = [
+      den.aspects.server
+      den.aspects.docker
+    ];
     nixos = {
       imports = [./_hardware.nix];
 
@@ -19,7 +22,6 @@
 
       networking.firewall.trustedInterfaces = ["nextcloud0"];
 
-      users.users.matt.uid = 1000;
       users.users.www-data.isSystemUser = true;
       users.users.www-data.group = "www-data";
       users.users.www-data.uid = 33;

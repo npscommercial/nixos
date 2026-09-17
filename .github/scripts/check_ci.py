@@ -36,7 +36,6 @@ TARGETS = {
         "storePath": PATHS[host],
         "rollbackScript": f"/nix/store/{str(index + 10).zfill(32)}-rollback-{host}",
         "deployPin": f"deployed-host-{host}",
-        **({"deferred": True} if host == "held" else {}),
     }
     for index, host in enumerate(HOSTS, 1)
 }
@@ -63,12 +62,12 @@ def build_record():
 
 
 class BuildRecordTests(unittest.TestCase):
-    def test_build_record_captures_validated_hosts_and_deferred_target(self):
+    def test_build_record_captures_validated_hosts_and_targets(self):
         record = build_record()
 
         self.assertEqual(record["sourceRevision"], REVISION)
         self.assertEqual(list(record["hosts"]), HOSTS)
-        self.assertTrue(record["targets"]["held"]["deferred"])
+        self.assertEqual(record["targets"], TARGETS)
 
     def test_build_record_rejects_failed_nfb_result(self):
         results = nfb_results()
@@ -86,13 +85,13 @@ class BuildRecordTests(unittest.TestCase):
 
 
 class TargetSelectionTests(unittest.TestCase):
-    def test_all_targets_excludes_deferred_and_unchanged_hosts(self):
+    def test_all_targets_excludes_only_unchanged_hosts(self):
         selected, skipped = build_records.select_targets(
             build_record(), "all", False, {"deployed-host-alpha": PATHS["alpha"]}
         )
 
-        self.assertEqual([target["host"] for target in selected], ["beta", "spare"])
-        self.assertEqual(skipped, {"alpha": "unchanged", "held": "deferred"})
+        self.assertEqual([target["host"] for target in selected], ["beta", "held", "spare"])
+        self.assertEqual(skipped, {"alpha": "unchanged"})
 
     def test_force_selects_an_unchanged_host(self):
         selected, skipped = build_records.select_targets(
@@ -150,7 +149,7 @@ class StatusRecordTests(unittest.TestCase):
                 CI.status_record(build_record())
 
     def test_status_reports_agents_without_crossing_mutating_boundaries(self):
-        reported = {"alpha": "online", "beta": "offline", "spare": "unregistered"}
+        reported = {"alpha": "online", "beta": "offline", "held": "online", "spare": "unregistered"}
         output = io.StringIO()
 
         with patch.dict(
@@ -166,7 +165,7 @@ class StatusRecordTests(unittest.TestCase):
 
         self.assertEqual(
             statuses,
-            {"alpha": "online", "held": "deferred", "beta": "offline", "spare": "unregistered"},
+            reported,
         )
         verify.assert_not_called()
         activate.assert_not_called()

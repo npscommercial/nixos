@@ -26,7 +26,7 @@ on:
         type: string
         default: all
       force:
-        description: Also deploy unchanged closures (offline and deferred hosts still skip)
+        description: Also deploy unchanged closures (offline hosts still skip)
         type: boolean
         default: false
 

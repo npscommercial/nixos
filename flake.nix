@@ -18,7 +18,11 @@
   };
 
   inputs = {
-    den.url = "github:vic/den";
+    den.url = "github:denful/den";
+    disko = {
+      url = "github:nix-community/disko/latest";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     flake-file.url = "github:denful/flake-file";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
@@ -28,7 +32,7 @@
       url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    import-tree.url = "github:vic/import-tree";
+    import-tree.url = "github:denful/import-tree";
     matt-github-keys = {
       url = "https://github.com/nps-matt.keys";
       flake = false;

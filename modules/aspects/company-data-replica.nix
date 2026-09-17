@@ -1,8 +1,11 @@
-{den, ...}: {
-  den.aspects.backup = {
+{lib, ...}: {
+  den.aspects.company-data-replica = {
     nixos = {
-      nps.deployment.health.requiredSystemdUnits = ["syncthing.service"];
-      boot.kernel.sysctl."fs.inotify.max_user_watches" = 204800;
+      nps.deployment.health.requiredSystemdUnits = [
+        "syncthing.service"
+        "syncthing-init.service"
+      ];
+      boot.kernel.sysctl."fs.inotify.max_user_watches" = lib.mkDefault 204800;
 
       # Enable Syncthing service
       services.syncthing = {
@@ -23,11 +26,15 @@
           path = "/npscommercial";
           devices = ["NPSSVR3" "NPSB1" "NPSB2"];
           type = "receiveonly";
+          versioning = {
+            type = "staggered";
+            params.maxAge = "1209600"; # 14 days, in seconds
+            cleanupIntervalS = 3600;
+          };
         };
       };
       systemd.tmpfiles.rules = ["d /npscommercial 0755 root root"];
-      # Don't create default ~/Sync folder
-      systemd.services.syncthing.environment.STNODEFAULTFOLDER = "true";
+      systemd.services.syncthing.unitConfig.RequiresMountsFor = ["/npscommercial"];
     };
   };
 }

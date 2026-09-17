@@ -19,7 +19,6 @@
   den.schema.host.includes = [den.policies.wsl-host-to-host];
 
   den.classes.hmLinux.description = "Linux-only Home Manager configuration";
-
   den.batteries.hmLinux = {
     host,
     user,

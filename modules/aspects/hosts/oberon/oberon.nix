@@ -10,8 +10,6 @@
       boot.loader.grub.enable = true;
       boot.loader.grub.device = "/dev/vda";
       boot.kernel.sysctl."vm.overcommit_memory" = 1;
-
-      users.users.matt.uid = 1001;
     };
   };
 }

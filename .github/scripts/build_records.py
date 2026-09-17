@@ -80,14 +80,11 @@ def build_record(nfb, expected_hosts, targets, revision):
         require(target_store == built[host], f"deploy target {host} does not match the NFB output")
         rollback = store_path(target.get("rollbackScript"), f"rollback script for {host}")
         require(target.get("deployPin") == f"deployed-host-{host}", f"deploy pin is malformed for {host}")
-        is_deferred = target.get("deferred", False)
-        require(isinstance(is_deferred, bool), f"deferred flag is malformed for {host}")
         captured_targets[host] = {
             "system": target["system"],
             "storePath": target_store,
             "rollbackScript": rollback,
             "deployPin": target["deployPin"],
-            "deferred": is_deferred,
         }
 
     record = {
@@ -118,7 +115,6 @@ def validate_record(record):
         require(target.get("storePath") == hosts[host], f"build record target path does not match for {host}")
         store_path(target.get("rollbackScript"), f"build record rollback script for {host}")
         require(target.get("deployPin") == f"deployed-host-{host}", f"build record pin is malformed for {host}")
-        require(isinstance(target.get("deferred"), bool), f"build record deferred flag is malformed for {host}")
     return record
 
 
@@ -138,9 +134,7 @@ def select_targets(record, requested, force, pins):
     skipped = {}
     for host in names:
         target = {**targets[host], "host": host}
-        if target["deferred"]:
-            skipped[host] = "deferred"
-        elif not force and pins.get(target["deployPin"]) == target["storePath"]:
+        if not force and pins.get(target["deployPin"]) == target["storePath"]:
             skipped[host] = "unchanged"
         else:
             selected.append(target)

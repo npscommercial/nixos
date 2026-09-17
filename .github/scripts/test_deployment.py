@@ -22,8 +22,7 @@ def record():
     return {'schemaVersion': 1, 'sourceRevision': SHA,
             'hosts': {'new-host': PATH}, 'targets': {'new-host': {
                 'system': 'aarch64-linux', 'storePath': PATH,
-                'rollbackScript': ROLLBACK, 'deployPin': 'deployed-host-new-host',
-                'deferred': False}}}
+                'rollbackScript': ROLLBACK, 'deployPin': 'deployed-host-new-host'}}}
 
 
 class DeploymentTests(unittest.TestCase):

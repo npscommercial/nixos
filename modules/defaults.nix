@@ -7,12 +7,10 @@
 }: {
   den.schema.user.classes = lib.mkDefault ["homeManager"];
 
-  den.default.includes = [den.batteries.hostname];
+  den.default.includes = [den.provides.hostname];
 
   den.default.wsl-host = {pkgs, ...}: {
-    wsl = {
-      ssh-agent.enable = true;
-    };
+    wsl.ssh-agent.enable = true;
     environment.systemPackages = with pkgs; [
       parallel
       qpdf

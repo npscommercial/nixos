@@ -1,6 +1,7 @@
 {
   config,
   inputs,
+  lib,
   ...
 }: {
   flake-file = {
@@ -19,8 +20,12 @@
     };
 
     inputs = {
-      den.url = "github:vic/den";
+      den.url = "github:denful/den";
       flake-file.url = "github:denful/flake-file";
+      disko = {
+        url = "github:nix-community/disko/latest";
+        inputs.nixpkgs.follows = "nixpkgs";
+      };
       flake-parts = {
         url = "github:hercules-ci/flake-parts";
         inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -29,13 +34,16 @@
         url = "github:nix-community/home-manager/release-26.05";
         inputs.nixpkgs.follows = "nixpkgs";
       };
-      import-tree.url = "github:vic/import-tree";
+      import-tree.url = "github:denful/import-tree";
       nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
       nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     };
   };
 
-  systems = builtins.attrNames config.den.hosts;
+  systems = lib.unique (
+    builtins.attrNames config.den.hosts
+    ++ ["aarch64-darwin"]
+  );
 
   imports = [
     inputs.flake-file.flakeModules.dendritic
