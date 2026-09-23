@@ -30,6 +30,7 @@
       boot.zfs.devNodes = "/dev/disk/by-partuuid";
       boot.zfs.forceImportRoot = false;
       services.zfs.autoScrub.enable = true;
+      services.telegraf.enable = true;
       networking.hostId = "f2e52f86";
 
       disko.devices.zpool.${config.networking.hostName}.datasets."user/npscommercial" = {
