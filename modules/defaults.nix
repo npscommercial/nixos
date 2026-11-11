@@ -9,6 +9,11 @@
 
   den.default.includes = [den.provides.hostname];
 
+  # Hosts accept host-level content (nixos/os) from the admin user's aspect,
+  # such as the sops-backed password and authorised keys. den delivers user
+  # content to hosts only when the host opts in.
+  den.schema.host.includes = [(den.batteries.user-aspects {users = ["whitestrake"];})];
+
   den.default.wsl-host = {pkgs, ...}: {
     wsl.ssh-agent.enable = true;
     environment.systemPackages = with pkgs; [
