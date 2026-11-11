@@ -26,6 +26,21 @@ updates:
     commit-message:
       prefix: chore(containers)
 
+  # Caddy and its plugins. These pull requests also need a new vendorHash in
+  # modules/aspects/caddy/_package.nix; the failed build reports it as `got:`.
+  - package-ecosystem: gomod
+    directory: /modules/aspects/caddy/build
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Brisbane
+    commit-message:
+      prefix: chore(caddy)
+    groups:
+      caddy:
+        patterns: ["*"]
+
   - package-ecosystem: github-actions
     directories:
       - /

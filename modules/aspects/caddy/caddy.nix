@@ -10,12 +10,8 @@
 
     services.caddy = {
       enable = true;
-      # The hash covers Caddy and its plugins together, so it changes whenever
-      # nixpkgs updates Caddy. The failed build reports the new hash as `got:`.
-      package = pkgs.caddy.withPlugins {
-        plugins = ["github.com/caddy-dns/cloudflare@v0.2.4"];
-        hash = "sha256-tubXIDCJnO2mvdnPlZclwDhNGaeeYLSt7lnni3+pXDo=";
-      };
+      # Built from ./build; see _package.nix.
+      package = pkgs.callPackage ./_package.nix {};
       email = "tech@npscommercial.com.au";
       environmentFile = config.sops.secrets.cloudflareDnsEnv.path;
       globalConfig = ''
