@@ -12,6 +12,7 @@
   den.default.wsl-host = {pkgs, ...}: {
     wsl.ssh-agent.enable = true;
     environment.systemPackages = with pkgs; [
+      powershell
       parallel
       qpdf
       ocrmypdf
@@ -34,10 +35,15 @@
       substituters = config.flake-file.nixConfig.extra-substituters;
       trusted-public-keys = config.flake-file.nixConfig.extra-trusted-public-keys;
     };
-    nix.optimise.automatic = true;
-    nix.gc = {
-      automatic = true;
-      options = "--delete-older-than 30d";
+    # Expire old generations daily, always keeping five for rollback.
+    programs.nh = {
+      enable = true;
+      flake = "github:npscommercial/nixos";
+      clean = {
+        enable = true;
+        dates = "daily";
+        extraArgs = "--keep-since 7d --keep 5";
+      };
     };
 
     nixpkgs.overlays = [
@@ -61,40 +67,35 @@
     # Allow unfree and configure base system packages
     nixpkgs.config.allowUnfree = true;
     environment.systemPackages = with pkgs; [
-      # Misc
-      btop
-      fish
-      powershell
       helix
       nh
 
-      # Files
+      # File system tools
       dua
       tree
       rclone
 
-      # HTTP
+      # Search tools
+      fd
+      ripgrep
+
+      # Data inspection
+      jq
+      fx
+
+      # Network clients
       wget
       curl
       xh
 
-      # JSON
-      jq
-      fx
-
-      # Net
+      # Troubleshooting
+      btop
+      mtr
+      tcpdump
       dig
       whois
       rdap
       iperf
-
-      # Linux
-      service-wrapper
-      iftop
-      iotop
-      ethtool
-      pciutils
-      usbutils
     ];
 
     # Enable git usage
