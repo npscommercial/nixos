@@ -1,8 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: ['**']
   workflow_dispatch:
     inputs:
       revision:
@@ -32,6 +31,12 @@ on:
 
 permissions:
   contents: read
+
+# A newer push supersedes a branch run. Default-branch runs are never
+# cancelled, because they pin builds and may deploy.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_name != github.event.repository.default_branch }}
 
 defaults:
   run:
@@ -93,7 +98,7 @@ jobs:
       - name: Build NixOS systems
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          PUBLISH_CHECKS: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+          PUBLISH_CHECKS: ${{ github.actor != 'dependabot[bot]' }}
         run: |
           reporting=()
           if [ "$PUBLISH_CHECKS" = true ]; then
@@ -210,7 +215,7 @@ jobs:
     name: Plan deployment
     needs: [resolve, build-hosts, flake-check]
     if: >-
-      (github.event_name == 'push' && vars.ENABLE_CACHIX_DEPLOY == 'true') ||
+      (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && vars.ENABLE_CACHIX_DEPLOY == 'true') ||
       (github.event_name == 'workflow_dispatch' && (inputs.deploy || inputs.preview || inputs.diagnostics))
     runs-on: ubuntu-24.04
     outputs:
@@ -256,7 +261,7 @@ jobs:
     needs: [resolve, plan]
     if: >-
       needs.plan.outputs.has-targets == 'true' &&
-      ((github.event_name == 'push' && vars.ENABLE_CACHIX_DEPLOY == 'true') ||
+      ((github.event_name == 'push' && github.ref_name == github.event.repository.default_branch && vars.ENABLE_CACHIX_DEPLOY == 'true') ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
