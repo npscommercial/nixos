@@ -1,0 +1,42 @@
+version: 2
+updates:
+  # Flake inputs. Only flake.lock changes; flake.nix stays as generated.
+  - package-ecosystem: nix
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Brisbane
+    commit-message:
+      prefix: chore(flake)
+    groups:
+      flake-inputs:
+        patterns: ["*"]
+
+  # Container images, pinned by tag and digest in each aspect's Dockerfile.
+  - package-ecosystem: docker
+    directories:
+      - /modules/aspects/*
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Brisbane
+    commit-message:
+      prefix: chore(containers)
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Australia/Brisbane
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
