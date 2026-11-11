@@ -113,6 +113,10 @@
     };
 
     systemd.services.alloy = {
+      # Remote configuration needs DNS, so wait for an address before the
+      # first Fleet Management lookup instead of failing and restarting.
+      wants = ["network-online.target"];
+      after = ["network-online.target"];
       restartTriggers = [config.sops.secrets.alloyEnv.sopsFileHash];
       environment = {
         GCLOUD_FM_COLLECTOR_ID = config.networking.hostName;
