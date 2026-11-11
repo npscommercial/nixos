@@ -175,8 +175,7 @@ in {
     config = lib.mkIf config.services.cachix-agent.enable {
       systemd.services = {
         cachix-agent.restartIfChanged = false;
-        nix-gc.unitConfig.ConditionPathExists = "!${deployLockPath}";
-        nix-optimise.unitConfig.ConditionPathExists = "!${deployLockPath}";
+        nh-clean.unitConfig.ConditionPathExists = "!${deployLockPath}";
         restart-cachix-agent = {
           description = "Restart a changed Cachix agent after a manual activation";
           wantedBy = ["multi-user.target"];
