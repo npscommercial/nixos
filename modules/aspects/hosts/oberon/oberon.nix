@@ -1,6 +1,10 @@
 {den, ...}: {
   den.aspects.oberon = {
-    includes = [den.aspects.server den.aspects.docker];
+    includes = [
+      den.aspects.server
+      den.aspects.beszel-hub
+      den.aspects.healthchecks
+    ];
     nixos = {
       imports = [./_hardware.nix];
 
@@ -15,6 +19,10 @@
       zramSwap.enable = true;
       systemd.services.alloy.environment.GOMEMLIMIT = "150MiB";
       services.journald.extraConfig = "SystemMaxUse=200M";
+
+      services.caddy.virtualHosts."oberon.npscommercial.net.au".extraConfig = ''
+        redir https://www.npscommercial.com.au/
+      '';
     };
   };
 }
