@@ -113,16 +113,29 @@ jobs:
             --nfb "$RUNNER_TEMP/host-results.json" --hosts "$RUNNER_TEMP/expected-hosts.json" \
             --targets "$RUNNER_TEMP/deploy-targets.json" --revision "$SOURCE_REVISION" \
             --output "$RUNNER_TEMP/build-record.json"
+      # Every build is uploaded, so any revision can be fetched onto a host
+      # ahead of its deployment. Only default-branch builds are pinned; the
+      # rest age out of the cache. Runs started by Dependabot get no repository
+      # secrets, so they skip the upload unless it is needed to deploy.
       - name: Upload systems to Cachix
-        if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview)
+        id: cachix-upload
         env:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          UPLOAD_REQUIRED: ${{ (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview) }}
         run: |
-          test -n "$CACHIX_AUTH_TOKEN"
+          if [ -z "$CACHIX_AUTH_TOKEN" ]; then
+            if [ "$UPLOAD_REQUIRED" = true ]; then
+              echo "::error title=Cachix token missing::This run deploys or pins builds and must upload them"
+              exit 1
+            fi
+            echo "::notice title=Cachix upload skipped::No Cachix token in this run"
+            exit 0
+          fi
           jq -r '.hosts[], .targets[].rollbackScript' "$RUNNER_TEMP/build-record.json" | sort -u > "$RUNNER_TEMP/cache-paths"
           "$TOOLS/bin/cachix" push npscommercial < "$RUNNER_TEMP/cache-paths"
+          echo "uploaded=true" >> "$GITHUB_OUTPUT"
       - name: Verify Cachix availability
-        if: (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch) || (github.event_name == 'workflow_dispatch' && inputs.deploy && !inputs.preview)
+        if: steps.cachix-upload.outputs.uploaded == 'true'
         run: |
           mapfile -t paths < "$RUNNER_TEMP/cache-paths"
           # Cachix omits dependencies already available from upstream caches.
