@@ -5,10 +5,7 @@
 }: let
   hostName = "healthchecks.npscommercial.com.au";
   # The image reference lives in a Dockerfile so Dependabot can update it.
-  image =
-    lib.removePrefix "FROM "
-    (lib.findFirst (lib.hasPrefix "FROM ") (throw "healthchecks: no FROM line in Dockerfile")
-      (lib.splitString "\n" (builtins.readFile ./Dockerfile)));
+  image = (import ../_dockerfile.nix lib ./Dockerfile).default;
   # Configuration and SQLite database, kept where the Docker deployment had them.
   dataDir = "/opt/docker/healthchecks/conf/healthchecks";
 in {
