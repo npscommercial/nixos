@@ -149,8 +149,16 @@ def agent_status(token, host, allow_unregistered=False):
     return "offline"
 
 
-def agent_online(token, host):
-    return agent_status(token, host) == "online"
+def agent_unavailable(token, host):
+    """Why the host's agent cannot take a deployment now, or None when it can."""
+    status = agent_status(token, host, allow_unregistered=True)
+    if status == "online":
+        return None
+    if status == "unregistered":
+        # Visible on the run summary, without failing the run for the other hosts.
+        print(f"::warning title=Cachix agent not registered::{host} has no Cachix agent; deployment skipped")
+        return "agent not registered"
+    return "agent offline on two probes"
 
 
 def status_record(record):
@@ -304,13 +312,15 @@ def deploy_record(record, requested, force, tools, directory, default_branch, re
     target = selected[0]
     host = target["host"]
     ensure_no_pending_deployment(host)
-    if not agent_online(status_token, host):
-        print(f"Skipping {host}: agent offline on two probes; deployed pin unchanged")
+    reason = agent_unavailable(status_token, host)
+    if reason:
+        print(f"Skipping {host}: {reason}; deployed pin unchanged")
         print(f"{host} will be reconsidered on the next deployment run")
         return []
     verify_remote_paths(target)
-    if not agent_online(status_token, host):
-        print(f"Skipping {host}: agent offline before submission; deployed pin unchanged")
+    reason = agent_unavailable(status_token, host)
+    if reason:
+        print(f"Skipping {host}: {reason} before submission; deployed pin unchanged")
         print(f"{host} will be reconsidered on the next deployment run")
         return []
     if not revision_allowed(record, mode, default_branch):

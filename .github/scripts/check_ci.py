@@ -179,7 +179,7 @@ def deployment_context():
         stack.enter_context(patch.dict(os.environ, DEPLOY_ENV, clear=True))
         defaults = {
             "fetch_pins": {}, "ensure_no_pending_deployment": None,
-            "agent_online": True, "verify_remote_paths": None,
+            "agent_status": "online", "verify_remote_paths": None,
             "github_current_revision": REVISION, "start_deployment": 17,
             "activate": None, "pin_store_path": None, "finish_deployment": None,
         }
@@ -215,7 +215,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_offline_host_is_skipped_before_remote_validation(self):
         with deployment_context() as (directory, mocks):
-            mocks["agent_online"].return_value = False
+            mocks["agent_status"].return_value = "offline"
             deployed = CI.deploy_record(build_record(), "beta", False, directory, directory, "main", "refs/heads/main")
 
         self.assertEqual(deployed, [])
@@ -223,9 +223,23 @@ class DeploymentTests(unittest.TestCase):
         for name in ("start_deployment", "activate", "pin_store_path", "finish_deployment"):
             mocks[name].assert_not_called()
 
+    def test_unregistered_host_is_skipped_with_a_warning(self):
+        output = io.StringIO()
+        with deployment_context() as (directory, mocks), contextlib.redirect_stdout(output):
+            mocks["agent_status"].return_value = "unregistered"
+            deployed = CI.deploy_record(build_record(), "beta", False, directory, directory, "main", "refs/heads/main")
+
+        self.assertEqual(deployed, [])
+        mocks["agent_status"].assert_called_once_with("status-token", "beta", allow_unregistered=True)
+        self.assertIn("::warning title=Cachix agent not registered::beta", output.getvalue())
+        self.assertIn("Skipping beta: agent not registered", output.getvalue())
+        mocks["verify_remote_paths"].assert_not_called()
+        for name in ("start_deployment", "activate", "pin_store_path", "finish_deployment"):
+            mocks[name].assert_not_called()
+
     def test_host_going_offline_after_validation_is_not_submitted(self):
         with deployment_context() as (directory, mocks):
-            mocks["agent_online"].side_effect = [True, False]
+            mocks["agent_status"].side_effect = ["online", "offline"]
             deployed = CI.deploy_record(build_record(), "beta", False, directory, directory, "main", "refs/heads/main")
 
         self.assertEqual(deployed, [])
